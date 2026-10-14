@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GigaDict.App/GigaDict.App.csproj" />
+    <Project Path="src/GigaDict.Audio/GigaDict.Audio.csproj" />
+    <Project Path="src/GigaDict.Core/GigaDict.Core.csproj" />
+    <Project Path="src/GigaDict.Input/GigaDict.Input.csproj" />
+    <Project Path="src/GigaDict.Recognition/GigaDict.Recognition.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GigaDict.Tests/GigaDict.Tests.csproj" />
+  </Folder>
+</Solution>

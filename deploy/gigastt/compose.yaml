@@ -1,0 +1,53 @@
+# GigaAM v3 e2e-rnnt on Ugreen DXP4800+ (Pentium Gold 8505, CPU only).
+# UGOS: Container Manager → Compose → create stack from this file.
+#
+# 8505 is 1P+4E / 6 threads. gigastt has no Intel-GPU / OpenVINO path,
+# so inference stays INT8 CPU. First start downloads ~225 MB weights —
+# keep outbound HTTPS open. Do not port-forward 9876 to the internet.
+
+x-gigastt-image: &gigastt-image ghcr.io/ekhodzitsky/gigastt:2.22.0@sha256:ac7f7ccb7d5b9628d9e16cc361f29e61beedd8e1df8b0927b4a17921b7ec2f35
+
+services:
+  gigastt:
+    image: *gigastt-image
+    container_name: gigastt
+    restart: unless-stopped
+    stop_grace_period: 20s
+    ports:
+      - "${GIGASTT_BIND_ADDRESS:-0.0.0.0}:${GIGASTT_PORT:-9876}:9876"
+    # UGOS creates the named volume as root, so this single-container variant
+    # runs as root to keep the model directory writable.
+    user: "0:0"
+    volumes:
+      - gigastt-models:/home/gigastt/.gigastt
+    environment:
+      GIGASTT_MODEL_VARIANT: e2e_rnnt
+      GIGASTT_PROFILE: edge
+      GIGASTT_ALLOW_BIND_ANY: "1"
+      GIGASTT_ENCODER_INTRA_THREADS: "5"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mkdir -p /home/gigastt/.gigastt/models &&
+        gigastt download --model-variant e2e_rnnt --skip-diarization --model-dir /home/gigastt/.gigastt/models &&
+        exec gigastt serve --port 9876 --host 0.0.0.0 --bind-all --profile edge --model-variant e2e_rnnt --model-dir /home/gigastt/.gigastt/models
+    mem_limit: 8g
+    cpus: "5.0"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9876/ready"]
+      interval: 30s
+      timeout: 8s
+      retries: 40
+      start_period: 360s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  gigastt-models:

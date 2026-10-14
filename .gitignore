@@ -1,0 +1,11 @@
+bin/
+obj/
+artifacts/
+.vs/
+.idea/
+.dotnet-home/
+.nuget/
+*.user
+*.suo
+deploy/gigastt/.env
+
