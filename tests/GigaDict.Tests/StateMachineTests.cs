@@ -26,6 +26,17 @@ public sealed class StateMachineTests
     }
 
     [Fact]
+    public void RepeatedDisposalDoesNotThrowAndClearsAudio()
+    {
+        byte[] audio = [1, 2];
+        var task = new DictationTask(1, audio, null, new AppSettings());
+        task.Dispose();
+        task.Dispose();
+        Assert.Equal(0, task.AudioLength);
+        Assert.All(audio, value => Assert.Equal(0, value));
+    }
+
+    [Fact]
     public void PasswordFocusDisablesInsertion()
     {
         using var task = new DictationTask(1, [0, 0], new FocusIdentity(1, 2, "x", true, true), new AppSettings());

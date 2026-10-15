@@ -14,21 +14,21 @@ public sealed class RecognitionQueue : IAsyncDisposable
     private readonly object _gate = new();
     private readonly CancellationTokenSource _shutdown = new();
     private readonly Task _worker;
-    private readonly int _maxItems;
-    private readonly long _maxBytes;
-    private readonly int _historySize;
+    private int _maxItems;
+    private long _maxBytes;
+    private int _historySize;
+    private bool _accepting = true;
     private int _itemCount;
     private long _audioBytes;
 
     public RecognitionQueue(IEnumerable<ITranscriptionTransport> transports, int maxItems = 10, long maxBytes = 128L * 1024 * 1024, int historySize = 10)
     {
         _transports = transports.ToDictionary(x => x.Kind);
-        _maxItems = maxItems;
-        _maxBytes = maxBytes;
-        _historySize = historySize;
-        _channel = Channel.CreateBounded<DictationTask>(new BoundedChannelOptions(maxItems)
+        UpdateLimits(maxItems, maxBytes, historySize);
+        // Admission and memory accounting are guarded by _gate. An unbounded
+        // channel lets limits change without replacing the worker or dropping items.
+        _channel = Channel.CreateUnbounded<DictationTask>(new UnboundedChannelOptions
         {
-            FullMode = BoundedChannelFullMode.DropWrite,
             SingleReader = true,
             SingleWriter = false
         });
@@ -40,6 +40,25 @@ public sealed class RecognitionQueue : IAsyncDisposable
     public long AudioBytes => Interlocked.Read(ref _audioBytes);
     public IReadOnlyList<HistoryEntry> History { get { lock (_gate) return _history.ToArray(); } }
 
+    public void UpdateLimits(int maxItems, long maxBytes, int historySize)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxItems);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxBytes);
+        ArgumentOutOfRangeException.ThrowIfNegative(historySize);
+        lock (_gate)
+        {
+            _maxItems = maxItems;
+            _maxBytes = maxBytes;
+            _historySize = historySize;
+            TrimHistory();
+        }
+    }
+
+    private void TrimHistory()
+    {
+        if (_history.Count > _historySize) _history.RemoveRange(_historySize, _history.Count - _historySize);
+    }
+
     public void UpdateHistory(DictationTask item)
     {
         var entry = new HistoryEntry(item.Id, item.Sequence, item.CreatedAt, item.Result, item.Error,
@@ -49,7 +68,7 @@ public sealed class RecognitionQueue : IAsyncDisposable
             var index = _history.FindIndex(x => x.TaskId == item.Id);
             if (index >= 0) _history[index] = entry;
             else _history.Insert(0, entry);
-            if (_history.Count > _historySize) _history.RemoveRange(_historySize, _history.Count - _historySize);
+            TrimHistory();
         }
     }
 
@@ -58,11 +77,17 @@ public sealed class RecognitionQueue : IAsyncDisposable
         var length = task.AudioLength;
         lock (_gate)
         {
-            if (_itemCount >= _maxItems || _audioBytes + length > _maxBytes) return false;
-            if (!_channel.Writer.TryWrite(task)) return false;
+            if (!_accepting || _itemCount >= _maxItems || _audioBytes + length > _maxBytes) return false;
+            task.TransitionTo(DictationStatus.Queued);
             _itemCount++;
             _audioBytes += length;
-            task.TransitionTo(DictationStatus.Queued);
+            if (!_channel.Writer.TryWrite(task))
+            {
+                _itemCount--;
+                _audioBytes -= length;
+                task.TransitionTo(DictationStatus.Cancelled);
+                return false;
+            }
             return true;
         }
     }
@@ -79,6 +104,7 @@ public sealed class RecognitionQueue : IAsyncDisposable
 
     private async Task ProcessOneAsync(DictationTask item, CancellationToken shutdown)
     {
+        var audioLength = item.AudioLength;
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(shutdown, item.Cancellation.Token);
         try
         {
@@ -95,27 +121,36 @@ public sealed class RecognitionQueue : IAsyncDisposable
         }
         catch (OperationCanceledException)
         {
-            if (item.Status is not (DictationStatus.Cancelled or DictationStatus.Failed)) item.TransitionTo(DictationStatus.Cancelled);
+            item.EndRecognitionWithError(null, cancelled: true);
         }
         catch (Exception exception)
         {
-            item.Error = exception.Message;
-            if (item.Status is not (DictationStatus.Failed or DictationStatus.Cancelled)) item.TransitionTo(DictationStatus.Failed);
+            item.EndRecognitionWithError(exception.Message, cancelled: false);
         }
         finally
         {
             UpdateHistory(item);
-            lock (_gate) { _itemCount--; _audioBytes -= item.AudioLength; }
             item.ReleaseAudio();
+            lock (_gate) { _itemCount--; _audioBytes -= audioLength; }
         }
     }
 
     public async ValueTask DisposeAsync()
     {
-        _channel.Writer.TryComplete();
+        lock (_gate)
+        {
+            _accepting = false;
+            _channel.Writer.TryComplete();
+        }
         _shutdown.Cancel();
         try { await _worker.ConfigureAwait(false); } catch (OperationCanceledException) { }
-        while (_channel.Reader.TryRead(out var item)) item.Dispose();
+        while (_channel.Reader.TryRead(out var item))
+        {
+            var length = item.AudioLength;
+            item.EndRecognitionWithError(null, cancelled: true);
+            item.Dispose();
+            lock (_gate) { _itemCount--; _audioBytes -= length; }
+        }
         _shutdown.Dispose();
     }
 }

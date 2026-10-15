@@ -11,7 +11,7 @@ public sealed class HttpTranscriptionTransport(HttpClient? httpClient = null) : 
 
     public async Task<RecognitionResult> TranscribeAsync(RecognitionRequest request, CancellationToken cancellationToken)
     {
-        using var ownedClient = httpClient is null ? new HttpClient(new SocketsHttpHandler { ConnectTimeout = request.ConnectTimeout }) : null;
+        using var ownedClient = httpClient is null ? CreateClient(request.ConnectTimeout) : null;
         var client = httpClient ?? ownedClient!;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(request.RecognitionTimeout);
@@ -61,5 +61,8 @@ public sealed class HttpTranscriptionTransport(HttpClient? httpClient = null) : 
             }
         }
     }
+
+    internal static HttpClient CreateClient(TimeSpan connectTimeout) =>
+        new(new SocketsHttpHandler { ConnectTimeout = connectTimeout }) { Timeout = Timeout.InfiniteTimeSpan };
 }
 

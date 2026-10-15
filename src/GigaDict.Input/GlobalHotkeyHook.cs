@@ -37,10 +37,12 @@ public sealed class GlobalHotkeyHook : IDisposable
         var key = checked((int)data.VkCode);
         var down = message is NativeMethods.WmKeyDown or NativeMethods.WmSysKeyDown;
         var up = message is NativeMethods.WmKeyUp or NativeMethods.WmSysKeyUp;
-        var action = down ? _state.KeyDown(key, injected) : up ? _state.KeyUp(key, injected) : HotkeyAction.None;
-        if (action != HotkeyAction.None) ThreadPool.QueueUserWorkItem(_ => Action?.Invoke(this, action));
-        var suppress = !injected && (_combination.Contains(key) || action == HotkeyAction.CancelRecording || (key == 0x1B && _state.IsRecording));
-        return suppress ? 1 : NativeMethods.CallNextHookEx(_hook, code, message, parameter);
+        if (!down && !up) return NativeMethods.CallNextHookEx(_hook, code, message, parameter);
+        var decision = _state.ProcessKey(key, down, injected);
+        // The subscriber only enqueues into the application's sequential worker.
+        // Keep notification order and do not perform recording/UIA work here.
+        if (decision.Action != HotkeyAction.None) Action?.Invoke(this, decision.Action);
+        return decision.Suppress ? 1 : NativeMethods.CallNextHookEx(_hook, code, message, parameter);
     }
 
     public void Dispose()

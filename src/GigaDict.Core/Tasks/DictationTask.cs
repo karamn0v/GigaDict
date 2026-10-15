@@ -43,6 +43,7 @@ public sealed class DictationTask : IDisposable
 
     private readonly object _gate = new();
     private byte[]? _audio;
+    private bool _disposed;
     private DictationStatus _status = DictationStatus.Recording;
 
     public DictationTask(long sequence, byte[] audio, FocusIdentity? focus, AppSettings settings, Guid? id = null)
@@ -77,6 +78,22 @@ public sealed class DictationTask : IDisposable
 
     public void InvalidateInsertion() => AutomaticInsertionAllowed = false;
 
+    public void EndRecognitionWithError(string? error, bool cancelled)
+    {
+        lock (_gate)
+        {
+            AutomaticInsertionAllowed = false;
+            Error = error;
+            _status = _status switch
+            {
+                DictationStatus.Recording or DictationStatus.Queued or DictationStatus.Recognizing or DictationStatus.RetryWaiting
+                    => cancelled ? DictationStatus.Cancelled : DictationStatus.Failed,
+                DictationStatus.Recognized or DictationStatus.WaitingForInsertion => DictationStatus.SavedToHistory,
+                _ => _status
+            };
+        }
+    }
+
     public void TransitionTo(DictationStatus next)
     {
         lock (_gate)
@@ -98,9 +115,13 @@ public sealed class DictationTask : IDisposable
 
     public void Dispose()
     {
-        Cancellation.Cancel();
-        Cancellation.Dispose();
-        ReleaseAudio();
+        lock (_gate)
+        {
+            if (_disposed) return;
+            _disposed = true;
+        }
+        try { Cancellation.Cancel(); }
+        finally { Cancellation.Dispose(); ReleaseAudio(); }
     }
 }
 

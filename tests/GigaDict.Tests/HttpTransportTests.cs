@@ -9,6 +9,13 @@ namespace GigaDict.Tests;
 public sealed class HttpTransportTests
 {
     [Fact]
+    public void OwnedClientDoesNotOverrideConfiguredRecognitionTimeoutWithOneHundredSeconds()
+    {
+        using var client = HttpTranscriptionTransport.CreateClient(TimeSpan.FromSeconds(10));
+        Assert.Equal(Timeout.InfiniteTimeSpan, client.Timeout);
+    }
+
+    [Fact]
     public async Task SendsWaveAsOctetStreamAndParsesText()
     {
         byte[]? body = null;

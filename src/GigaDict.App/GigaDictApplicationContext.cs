@@ -23,14 +23,13 @@ internal sealed class GigaDictApplicationContext : ApplicationContext
     private readonly Channel<DictationTask> _insertions = Channel.CreateUnbounded<DictationTask>(new UnboundedChannelOptions { SingleReader = true });
     private readonly CancellationTokenSource _shutdown = new();
     private readonly Control _dispatcher = new();
+    private readonly SequentialActionQueue _recordingActions;
+    private readonly RecordingSessionController _recording;
     private AppSettings _settings;
     private RecognitionQueue _queue;
     private GlobalHotkeyHook _hook;
     private System.Windows.Forms.Timer? _stateResetTimer;
     private Task _insertionWorker;
-    private Guid? _recordingId;
-    private FocusIdentity? _recordingFocus;
-    private long _sequence;
     private bool _sessionAvailable = true;
     private bool _exiting;
 
@@ -41,6 +40,13 @@ internal sealed class GigaDictApplicationContext : ApplicationContext
         _appIcon = LoadAppIcon();
         _trayIcons = new TrayIconSet(_appIcon);
         _dispatcher.CreateControl();
+        _recording = new RecordingSessionController(_recorder, _focus);
+        _recordingActions = new SequentialActionQueue(exception =>
+        {
+            SetState("Ошибка: " + exception.Message, TrayState.Error);
+            return Task.CompletedTask;
+        });
+        _recordingActions.Start();
         _queue = CreateQueue(_settings);
         _hook = CreateHook(_settings.Hotkey);
         _tray = new NotifyIcon
@@ -50,7 +56,7 @@ internal sealed class GigaDictApplicationContext : ApplicationContext
             Visible = true,
             ContextMenuStrip = BuildMenu()
         };
-        _recorder.LimitReached += async (_, _) => await CompleteRecordingAsync();
+        _recorder.LimitReached += (_, _) => PostRecordingAction(CompleteRecordingAsync);
         _recorder.CaptureFailed += (_, exception) => SetState("Ошибка микрофона: " + exception.Message, TrayState.Error);
         SystemEvents.SessionSwitch += OnSessionSwitch;
         _hook.Install();
@@ -73,57 +79,50 @@ internal sealed class GigaDictApplicationContext : ApplicationContext
         return hook;
     }
 
-    private async void OnHotkeyAction(object? sender, HotkeyAction action)
+    private void OnHotkeyAction(object? sender, HotkeyAction action)
     {
-        try
+        // Called directly by the hook: enqueue only, preserving down/up order.
+        if (!_sessionAvailable || _exiting) return;
+        PostRecordingAction(async () =>
         {
-            if (!_sessionAvailable) return;
+            if (!_sessionAvailable || _exiting) return;
             switch (action)
             {
                 case HotkeyAction.StartRecording: StartRecording(); break;
                 case HotkeyAction.StopRecording: await CompleteRecordingAsync(); break;
                 case HotkeyAction.CancelRecording: CancelRecording(); break;
             }
-        }
-        catch (Exception exception) { SetState("Ошибка: " + exception.Message, TrayState.Error); }
+        });
     }
+
+    private void PostRecordingAction(Func<Task> action) =>
+        _recordingActions.TryPost(action);
 
     private void StartRecording()
     {
-        if (_recordingId is not null) return;
-        var id = Guid.NewGuid();
-        var focus = _focus.Capture();
-        if (focus is not null) _focus.Track(id, focus, _settings.FocusProtection);
-        _recordingId = id;
-        _recordingFocus = focus;
-        var taskBytes = Math.Min(_settings.MaximumAudioMemoryMiB * 1024L * 1024L, 32000L * _settings.MaximumRecordingSeconds);
-        _recorder.Start(_settings.CaptureDeviceId, TimeSpan.FromSeconds(_settings.MaximumRecordingSeconds), taskBytes);
+        if (_recording.IsRecording) return;
+        _recording.Start(_settings);
         SetState("Идёт запись — Esc для отмены", TrayState.Recording);
     }
 
     private async Task CompleteRecordingAsync()
     {
-        if (_recordingId is not { } id) return;
-        _recordingId = null;
-        byte[] audio;
-        try { audio = await _recorder.StopAsync(_shutdown.Token); }
-        catch (Exception exception) { _focus.Forget(id); SetState("Ошибка микрофона: " + exception.Message, TrayState.Error); return; }
-        if (audio.Length == 0) { _focus.Forget(id); SetState("Пустая запись", TrayState.Warning); return; }
-        var task = new DictationTask(Interlocked.Increment(ref _sequence), audio, _recordingFocus, _settings, id);
-        if (!_focus.IsStillSafe(id)) task.InvalidateInsertion();
+        if (!_recording.IsRecording) return;
+        DictationTask? task;
+        try { task = await _recording.CompleteAsync(_shutdown.Token); }
+        catch (Exception exception) { SetState("Ошибка микрофона: " + exception.Message, TrayState.Error); return; }
+        if (task is null) { SetState("Пустая запись", TrayState.Warning); return; }
         if (!_queue.TryEnqueue(task))
         {
-            task.Dispose(); _focus.Forget(id); SetState("Очередь или лимит RAM заполнены", TrayState.Error); return;
+            task.Dispose(); _focus.Forget(task.Id); SetState("Очередь или лимит RAM заполнены", TrayState.Error); return;
         }
         SetState($"В очереди: {_queue.Count}", TrayState.Working);
     }
 
     private void CancelRecording()
     {
-        if (_recordingId is not { } id) return;
-        _recordingId = null;
-        _recorder.Cancel();
-        _focus.Forget(id);
+        if (!_recording.IsRecording) return;
+        _recording.Cancel();
         SetState("Диктовка отменена", TrayState.Idle);
     }
 
@@ -148,7 +147,8 @@ internal sealed class GigaDictApplicationContext : ApplicationContext
                 {
                     await InvokeOnUiAsync(async () =>
                     {
-                        var safe = () => _focus.IsStillSafe(item.Id) && !_hook.IsHeld;
+                        var safe = () => !_exiting && _sessionAvailable && item.AutomaticInsertionAllowed &&
+                            _focus.IsStillSafe(item.Id) && !_hook.IsHeld;
                         var text = TextBoundary.Prepare(item.Result!, null, null, false, item.Settings.AutomaticSpaces);
                         if (item.Settings.InsertionMethod == InsertionMethod.UnicodeSendInput) UnicodeTextInserter.Insert(text, safe);
                         else await ClipboardTextInserter.InsertAsync(text, safe, _shutdown.Token);
@@ -224,12 +224,19 @@ internal sealed class GigaDictApplicationContext : ApplicationContext
         form.Icon = _appIcon;
         if (form.ShowDialog() != DialogResult.OK || !form.TryBuild(out var updated)) return;
         await _store.SaveAsync(updated);
-        AutoStartManager.SetEnabled(updated.AutoStart);
-        if (!string.Equals(updated.Hotkey, _settings.Hotkey, StringComparison.OrdinalIgnoreCase))
+        PostRecordingAction(() => InvokeOnUiAsync(() =>
         {
-            _hook.Dispose(); _hook = CreateHook(updated.Hotkey); _hook.Install();
-        }
-        _settings = updated;
+            if (_exiting) return Task.CompletedTask;
+            AutoStartManager.SetEnabled(updated.AutoStart);
+            if (!string.Equals(updated.Hotkey, _settings.Hotkey, StringComparison.OrdinalIgnoreCase))
+            {
+                CancelRecording();
+                _hook.Dispose(); _hook = CreateHook(updated.Hotkey); _hook.Install();
+            }
+            _queue.UpdateLimits(updated.MaximumQueueItems, updated.MaximumAudioMemoryMiB * 1024L * 1024L, updated.HistorySize);
+            _settings = updated;
+            return Task.CompletedTask;
+        }));
     }
 
     private AppSettings LoadSettings()
@@ -241,7 +248,11 @@ internal sealed class GigaDictApplicationContext : ApplicationContext
     private void OnSessionSwitch(object sender, SessionSwitchEventArgs args)
     {
         _sessionAvailable = args.Reason is SessionSwitchReason.SessionUnlock or SessionSwitchReason.RemoteConnect or SessionSwitchReason.SessionLogon;
-        if (!_sessionAvailable) CancelRecording();
+        if (!_sessionAvailable)
+        {
+            _focus.InvalidateAll();
+            PostRecordingAction(() => { CancelRecording(); return Task.CompletedTask; });
+        }
     }
 
     private void SetState(string text, TrayState state, int resetAfterMilliseconds = 0)
@@ -278,7 +289,9 @@ internal sealed class GigaDictApplicationContext : ApplicationContext
         if (_exiting) return;
         if (_queue.Count > 0 && MessageBox.Show("В очереди есть записи. Выйти и удалить их из RAM?", "GigaDict", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
         _exiting = true;
-        _hook.Dispose(); CancelRecording(); _insertions.Writer.TryComplete(); _shutdown.Cancel();
+        _hook.Dispose(); _focus.InvalidateAll(); _insertions.Writer.TryComplete(); _shutdown.Cancel();
+        await _recordingActions.DisposeAsync();
+        CancelRecording();
         await _queue.DisposeAsync();
         try { await _insertionWorker; } catch (OperationCanceledException) { }
         _stateResetTimer?.Stop(); _stateResetTimer?.Dispose();

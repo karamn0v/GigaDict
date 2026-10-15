@@ -6,12 +6,14 @@ using Interop.UIAutomationClient;
 
 namespace GigaDict.Input;
 
-public sealed class FocusGuard : IDisposable
+public sealed class FocusGuard : IFocusGuard, IDisposable
 {
     private readonly FocusContinuityTracker _continuity = new();
     private readonly NativeMethods.WinEventProc? _callback;
     private readonly IUIAutomation? _automation;
     private nint _eventHook;
+    private nint _foregroundHook;
+    private nint _desktopHook;
 
     public FocusGuard()
     {
@@ -22,6 +24,10 @@ public sealed class FocusGuard : IDisposable
             _callback = OnFocusChanged;
             _eventHook = NativeMethods.SetWinEventHook(NativeMethods.EventObjectFocus, NativeMethods.EventObjectFocus,
                 0, _callback, 0, 0, NativeMethods.WineventOutofcontext);
+            _foregroundHook = NativeMethods.SetWinEventHook(NativeMethods.EventSystemForeground, NativeMethods.EventSystemForeground,
+                0, _callback, 0, 0, NativeMethods.WineventOutofcontext);
+            _desktopHook = NativeMethods.SetWinEventHook(NativeMethods.EventSystemDesktopSwitch, NativeMethods.EventSystemDesktopSwitch,
+                0, _callback, 0, 0, NativeMethods.WineventOutofcontext);
         }
         catch (Exception exception) when (IsRecoverable(exception))
         {
@@ -31,7 +37,7 @@ public sealed class FocusGuard : IDisposable
 
     public FocusIdentity? Capture()
     {
-        if (_automation is null) return null;
+        if (_automation is null || _eventHook == 0 || _foregroundHook == 0 || _desktopHook == 0) return null;
         try
         {
             var window = NativeMethods.GetForegroundWindow();
@@ -54,18 +60,11 @@ public sealed class FocusGuard : IDisposable
     public void Track(Guid taskId, FocusIdentity identity, FocusProtectionMode mode = FocusProtectionMode.Strict) => _continuity.Track(taskId, identity, mode);
     public bool IsStillSafe(Guid taskId) => _continuity.IsStillSafe(taskId, Capture());
     public void Forget(Guid taskId) => _continuity.Forget(taskId);
+    public void InvalidateAll() => _continuity.InvalidateAll();
 
     private void OnFocusChanged(nint hook, uint eventType, nint window, int objectId, int childId, uint threadId, uint time)
     {
-        ThreadPool.QueueUserWorkItem(_ => ObserveFocusSafely());
-    }
-
-    private void ObserveFocusSafely()
-    {
-        // WinEvent вызывается вне UI-потока. Ошибка UIA означает потерю достоверности,
-        // поэтому запрещаем вставку для отслеживаемых задач, но не завершаем процесс.
-        try { _continuity.Observe(Capture()); }
-        catch (Exception exception) when (IsRecoverable(exception)) { _continuity.Observe(null); }
+        _continuity.InvalidateAll();
     }
 
     private static bool IsRecoverable(Exception exception) => exception is
@@ -74,7 +73,11 @@ public sealed class FocusGuard : IDisposable
     public void Dispose()
     {
         if (_eventHook != 0) NativeMethods.UnhookWinEvent(_eventHook);
+        if (_foregroundHook != 0) NativeMethods.UnhookWinEvent(_foregroundHook);
+        if (_desktopHook != 0) NativeMethods.UnhookWinEvent(_desktopHook);
         _eventHook = 0;
+        _foregroundHook = 0;
+        _desktopHook = 0;
         if (_automation is not null && Marshal.IsComObject(_automation)) Marshal.FinalReleaseComObject(_automation);
     }
 }

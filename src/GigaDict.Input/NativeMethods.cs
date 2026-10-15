@@ -14,6 +14,8 @@ internal static partial class NativeMethods
     internal const uint KeyeventfKeyup = 0x0002;
     internal const uint KeyeventfUnicode = 0x0004;
     internal const uint EventObjectFocus = 0x8005;
+    internal const uint EventSystemForeground = 0x0003;
+    internal const uint EventSystemDesktopSwitch = 0x0020;
     internal const uint WineventOutofcontext = 0;
     internal static readonly nuint InjectionMarker = unchecked((nuint)0x47444943544UL);
 

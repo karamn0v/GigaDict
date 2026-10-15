@@ -1,19 +1,42 @@
 namespace GigaDict.Core.Input;
 
 public enum HotkeyAction { None, StartRecording, StopRecording, CancelRecording }
+public readonly record struct HotkeyDecision(HotkeyAction Action, bool Suppress);
 
 public sealed class HotkeyStateMachine(IReadOnlySet<int> combination, int escapeKey = 0x1B)
 {
     private readonly HashSet<int> _pressed = [];
+    private readonly HashSet<int> _suppressed = [];
+    private readonly object _gate = new();
     private bool _recording;
     private bool _cancelledUntilReleased;
 
-    public bool IsHeld => combination.All(_pressed.Contains);
-    public bool IsRecording => _recording;
+    public bool IsHeld { get { lock (_gate) return IsCombinationHeld(); } }
+    public bool IsRecording { get { lock (_gate) return _recording; } }
+
+    public HotkeyDecision ProcessKey(int virtualKey, bool down, bool injected)
+    {
+        lock (_gate)
+        {
+            if (injected) return new(HotkeyAction.None, false);
+            var action = down ? KeyDownCore(virtualKey) : KeyUpCore(virtualKey);
+            var suppress = down
+                ? _suppressed.Contains(virtualKey) || action == HotkeyAction.CancelRecording ||
+                    (_recording && IsPart(virtualKey) && (!IsModifier(virtualKey) || combination.Count == 1))
+                : _suppressed.Remove(virtualKey);
+            if (down && suppress) _suppressed.Add(virtualKey);
+            return new(action, suppress);
+        }
+    }
 
     public HotkeyAction KeyDown(int virtualKey, bool injectedByGigaDict)
     {
         if (injectedByGigaDict) return HotkeyAction.None;
+        lock (_gate) return KeyDownCore(virtualKey);
+    }
+
+    private HotkeyAction KeyDownCore(int virtualKey)
+    {
         if (virtualKey == escapeKey && _recording)
         {
             _recording = false;
@@ -21,7 +44,7 @@ public sealed class HotkeyStateMachine(IReadOnlySet<int> combination, int escape
             return HotkeyAction.CancelRecording;
         }
         if (!_pressed.Add(virtualKey)) return HotkeyAction.None;
-        if (!_recording && !_cancelledUntilReleased && combination.All(_pressed.Contains))
+        if (!_recording && !_cancelledUntilReleased && IsCombinationHeld())
         {
             _recording = true;
             return HotkeyAction.StartRecording;
@@ -32,9 +55,14 @@ public sealed class HotkeyStateMachine(IReadOnlySet<int> combination, int escape
     public HotkeyAction KeyUp(int virtualKey, bool injectedByGigaDict)
     {
         if (injectedByGigaDict) return HotkeyAction.None;
-        var wasPart = combination.Contains(virtualKey);
+        lock (_gate) return KeyUpCore(virtualKey);
+    }
+
+    private HotkeyAction KeyUpCore(int virtualKey)
+    {
+        var wasPart = IsPart(virtualKey);
         _pressed.Remove(virtualKey);
-        if (_cancelledUntilReleased && !combination.Any(_pressed.Contains)) _cancelledUntilReleased = false;
+        if (_cancelledUntilReleased && !_pressed.Any(IsPart)) _cancelledUntilReleased = false;
         if (_recording && wasPart)
         {
             _recording = false;
@@ -42,5 +70,16 @@ public sealed class HotkeyStateMachine(IReadOnlySet<int> combination, int escape
         }
         return HotkeyAction.None;
     }
+
+    private bool IsCombinationHeld() => combination.All(configured => _pressed.Any(actual => Matches(configured, actual)));
+    private bool IsPart(int actual) => combination.Any(configured => Matches(configured, actual));
+    private static bool IsModifier(int key) => key is 0x10 or 0x11 or 0x12 or >= 0xA0 and <= 0xA5;
+    private static bool Matches(int configured, int actual) => configured == actual || configured switch
+    {
+        0x10 => actual is 0xA0 or 0xA1,
+        0x11 => actual is 0xA2 or 0xA3,
+        0x12 => actual is 0xA4 or 0xA5,
+        _ => false
+    };
 }
 

@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using GigaDict.Core.Input;
 
 namespace GigaDict.Input;
 
@@ -16,17 +17,26 @@ public static class ClipboardTextInserter
         var replacement = new DataObject();
         replacement.SetText(text, TextDataFormat.UnicodeText);
         replacement.SetData(OwnershipFormat, token);
-        await RetryClipboardAsync(() => { Clipboard.SetDataObject(replacement, true); return true; }, cancellationToken).ConfigureAwait(true);
-        if (!focusIsSafe()) return;
-        SendPaste();
-        await Task.Delay(150, cancellationToken).ConfigureAwait(true);
-        try
-        {
-            var current = Clipboard.GetDataObject();
-            if (current?.GetData(OwnershipFormat) as string == token && previous is not null)
-                Clipboard.SetDataObject(previous, true);
-        }
-        catch (ExternalException) { /* Чужой новый Clipboard нельзя перезаписывать. */ }
+        await ClipboardInsertionTransaction.ExecuteAsync(focusIsSafe,
+            () => RetryClipboardAsync(() => { Clipboard.SetDataObject(replacement, true); return true; }, cancellationToken),
+            SendPaste,
+            async () =>
+            {
+                try
+                {
+                    await RetryClipboardAsync(() =>
+                    {
+                        var current = Clipboard.GetDataObject();
+                        if (current?.GetData(OwnershipFormat) as string == token)
+                        {
+                            if (previous is not null) Clipboard.SetDataObject(previous, true);
+                            else Clipboard.Clear();
+                        }
+                        return true;
+                    }, CancellationToken.None).ConfigureAwait(true);
+                }
+                catch (ExternalException) { /* A busy clipboard or another owner's data must not be overwritten. */ }
+            }, cancellationToken).ConfigureAwait(true);
     }
 
     private static async Task<T> RetryClipboardAsync<T>(Func<T> operation, CancellationToken cancellationToken)

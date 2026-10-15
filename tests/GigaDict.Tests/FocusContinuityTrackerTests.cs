@@ -18,6 +18,22 @@ public sealed class FocusContinuityTrackerTests
         Assert.True(tracker.IsStillSafe(id, Original));
     }
 
+    [Theory]
+    [InlineData(FocusProtectionMode.Strict)]
+    [InlineData(FocusProtectionMode.Compatible)]
+    public void FocusEventInvalidatesTaskEvenIfDeferredCaptureAlreadySeesOriginalField(FocusProtectionMode mode)
+    {
+        var tracker = new FocusContinuityTracker();
+        var id = Guid.NewGuid();
+        tracker.Track(id, Original, mode);
+        tracker.InvalidateAll();
+        tracker.Observe(Original);
+        Assert.False(tracker.IsStillSafe(id, Original));
+        var next = Guid.NewGuid();
+        tracker.Track(next, Original, mode);
+        Assert.True(tracker.IsStillSafe(next, Original));
+    }
+
     [Fact]
     public void UnknownFocusPermanentlyInvalidatesTask()
     {

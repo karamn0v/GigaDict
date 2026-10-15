@@ -5,6 +5,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="GigaDict.Tests" />
     <ProjectReference Include="../GigaDict.Core/GigaDict.Core.csproj" />
   </ItemGroup>
 
