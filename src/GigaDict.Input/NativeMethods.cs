@@ -17,6 +17,8 @@ internal static partial class NativeMethods
     internal const uint EventSystemForeground = 0x0003;
     internal const uint EventSystemDesktopSwitch = 0x0020;
     internal const uint WineventOutofcontext = 0;
+    internal const uint WmQuit = 0x0012;
+    internal const uint PmNoRemove = 0x0000;
     internal static readonly nuint InjectionMarker = unchecked((nuint)0x47444943544UL);
 
     internal delegate nint LowLevelKeyboardProc(int code, nuint wParam, nint lParam);
@@ -36,6 +38,25 @@ internal static partial class NativeMethods
     }
     [StructLayout(LayoutKind.Sequential)]
     internal struct KeybdInput { internal ushort VirtualKey; internal ushort ScanCode; internal uint Flags; internal uint Time; internal nuint ExtraInfo; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct Msg { internal nint Window; internal uint Message; internal nuint WParam; internal nint LParam; internal uint Time; internal int X; internal int Y; internal uint Private; }
+
+    [LibraryImport("user32.dll")]
+    internal static partial int GetMessageW(out Msg message, nint window, uint filterMin, uint filterMax);
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool PeekMessageW(out Msg message, nint window, uint filterMin, uint filterMax, uint remove);
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool TranslateMessage(in Msg message);
+    [LibraryImport("user32.dll")]
+    internal static partial nint DispatchMessageW(in Msg message);
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool PostThreadMessageW(uint threadId, uint message, nuint wParam, nint lParam);
+    [LibraryImport("kernel32.dll")]
+    internal static partial uint GetCurrentThreadId();
 
     [LibraryImport("user32.dll", SetLastError = true)]
     internal static partial nint SetWindowsHookExW(int idHook, LowLevelKeyboardProc callback, nint module, uint threadId);

@@ -13,6 +13,7 @@ dotnet test tests/GigaDict.Tests/GigaDict.Tests.csproj -c Release
 ## Обязательный чек-лист Windows 11
 
 - Запуск без повышения прав, одна копия процесса, иконка и выход из трея.
+- Горячая клавиша продолжает работать, пока целевое приложение приостановлено (Process Explorer → Suspend) и пока открыты окна настроек/истории.
 - Удержание/отпускание F8, auto-repeat, Ctrl+Shift+Space, F9 и правый Alt; Esc не попадает в активное приложение.
 - Запись 5 минут, отключение/смена USB-микрофона, устройство по умолчанию и индикатор Windows Privacy.
 - Вставка русского/английского текста, emoji и переносов в Блокнот, VS Code, Chrome, Edge, Telegram Desktop, Windows Terminal и обычные Win32 Edit.

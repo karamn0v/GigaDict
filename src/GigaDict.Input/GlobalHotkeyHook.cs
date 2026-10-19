@@ -9,6 +9,7 @@ public sealed class GlobalHotkeyHook : IDisposable
     private readonly NativeMethods.LowLevelKeyboardProc _callback;
     private readonly HotkeyStateMachine _state;
     private readonly HashSet<int> _combination;
+    private MessageLoopThread? _thread;
     private nint _hook;
 
     public GlobalHotkeyHook(IEnumerable<int> virtualKeys)
@@ -25,9 +26,15 @@ public sealed class GlobalHotkeyHook : IDisposable
 
     public void Install()
     {
-        if (_hook != 0) return;
-        _hook = NativeMethods.SetWindowsHookExW(NativeMethods.WhKeyboardLl, _callback, 0, 0);
-        if (_hook == 0) throw new Win32Exception(Marshal.GetLastWin32Error(), "Не удалось установить keyboard hook.");
+        if (_thread is not null) return;
+        // Windows silently removes a low-level hook whose thread does not answer
+        // within LowLevelHooksTimeout. The hook owns a thread that does nothing else.
+        _thread = new MessageLoopThread("GigaDict keyboard hook", () =>
+        {
+            _hook = NativeMethods.SetWindowsHookExW(NativeMethods.WhKeyboardLl, _callback, 0, 0);
+            if (_hook == 0) throw new Win32Exception(Marshal.GetLastWin32Error(), "Не удалось установить keyboard hook.");
+            return () => { NativeMethods.UnhookWindowsHookEx(_hook); _hook = 0; };
+        }, ThreadPriority.AboveNormal);
     }
 
     private nint HookCallback(int code, nuint message, nint parameter)
@@ -48,8 +55,8 @@ public sealed class GlobalHotkeyHook : IDisposable
 
     public void Dispose()
     {
-        if (_hook != 0) NativeMethods.UnhookWindowsHookEx(_hook);
-        _hook = 0;
+        _thread?.Dispose();
+        _thread = null;
     }
 }
 
