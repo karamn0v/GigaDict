@@ -1,6 +1,6 @@
-namespace GigaDict.App;
+namespace GigaDict.Core.Input;
 
-internal static class HotkeyParser
+public static class HotkeyParser
 {
     private static readonly Dictionary<string, int> Named = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -10,7 +10,7 @@ internal static class HotkeyParser
         ["Space"] = 0x20
     };
 
-    internal static IReadOnlySet<int> Parse(string value)
+    public static IReadOnlySet<int> Parse(string value)
     {
         var result = new HashSet<int>();
         foreach (var part in value.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))

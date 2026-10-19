@@ -14,7 +14,6 @@ public sealed record RecognitionRequest(
     Guid TaskId,
     ReadOnlyMemory<byte> Pcm16,
     Uri ServerBaseUri,
-    TransportKind Transport,
     TimeSpan ConnectTimeout,
     TimeSpan RecognitionTimeout);
 
@@ -22,7 +21,6 @@ public sealed record RecognitionResult(string Text, bool WasRetried = false);
 
 public interface ITranscriptionTransport
 {
-    TransportKind Kind { get; }
     Task<RecognitionResult> TranscribeAsync(RecognitionRequest request, CancellationToken cancellationToken);
 }
 

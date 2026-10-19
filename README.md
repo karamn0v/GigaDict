@@ -19,7 +19,7 @@ dotnet publish src/GigaDict.App/GigaDict.App.csproj -c Release -r win-x64 --self
 ## Использование
 
 1. Откройте «Настройки» из трея и укажите `http://адрес-NAS:9876`.
-2. Нажмите «Проверить соединение». HTTP используется по умолчанию; WebSocket можно выбрать без перезапуска.
+2. Нажмите «Проверить соединение».
 3. Выберите микрофон или устройство Windows по умолчанию.
 4. Поместите курсор в редактируемое поле, удерживайте `F8`, говорите и отпустите `F8`.
 5. `Esc` во время записи отменяет только текущую диктовку.
@@ -30,7 +30,7 @@ dotnet publish src/GigaDict.App/GigaDict.App.csproj -c Release -r win-x64 --self
 
 Лимиты очереди и PCM-памяти применяются после сохранения настроек без перезапуска. Уменьшение лимита сохраняет принятые задания, но блокирует новые до освобождения места. Текущая запись сохраняет настройки, действовавшие при её начале.
 
-Серверные endpoint и протокол реализованы по документации [GigaSTT v2.21.0](https://github.com/ekhodzitsky/gigastt/blob/v2.21.0/docs/api.md): `POST /v1/transcribe`, `GET /ready`, `/v1/ws`, PCM16 mono 16000 Гц и WebSocket protocol 1.0.
+Серверные endpoint и протокол реализованы по документации [GigaSTT v2.21.0](https://github.com/ekhodzitsky/gigastt/blob/v2.21.0/docs/api.md): `POST /v1/transcribe`, `GET /ready` и PCM16 mono 16000 Гц. WebSocket `/v1/ws` намеренно не используется: для диктовки по отпусканию клавиши он не даёт преимуществ перед REST.
 
 ## GigaSTT в Docker
 

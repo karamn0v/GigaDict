@@ -9,7 +9,7 @@ public sealed record HistoryEntry(Guid TaskId, long Sequence, DateTimeOffset Cre
 public sealed class RecognitionQueue : IAsyncDisposable
 {
     private readonly Channel<DictationTask> _channel;
-    private readonly Dictionary<TransportKind, ITranscriptionTransport> _transports;
+    private readonly ITranscriptionTransport _transport;
     private readonly List<HistoryEntry> _history = [];
     private readonly object _gate = new();
     private readonly CancellationTokenSource _shutdown = new();
@@ -21,9 +21,9 @@ public sealed class RecognitionQueue : IAsyncDisposable
     private int _itemCount;
     private long _audioBytes;
 
-    public RecognitionQueue(IEnumerable<ITranscriptionTransport> transports, int maxItems = 10, long maxBytes = 128L * 1024 * 1024, int historySize = 10)
+    public RecognitionQueue(ITranscriptionTransport transport, int maxItems = 10, long maxBytes = 128L * 1024 * 1024, int historySize = 10)
     {
-        _transports = transports.ToDictionary(x => x.Kind);
+        _transport = transport ?? throw new ArgumentNullException(nameof(transport));
         UpdateLimits(maxItems, maxBytes, historySize);
         // Admission and memory accounting are guarded by _gate. An unbounded
         // channel lets limits change without replacing the worker or dropping items.
@@ -109,9 +109,9 @@ public sealed class RecognitionQueue : IAsyncDisposable
         try
         {
             item.TransitionTo(DictationStatus.Recognizing);
-            var request = new RecognitionRequest(item.Id, item.Audio, item.Settings.ServerBaseUri, item.Settings.Transport,
+            var request = new RecognitionRequest(item.Id, item.Audio, item.Settings.ServerBaseUri,
                 TimeSpan.FromSeconds(item.Settings.ConnectTimeoutSeconds), TimeSpan.FromSeconds(item.Settings.RecognitionTimeoutSeconds));
-            var result = await _transports[item.Settings.Transport].TranscribeAsync(request, linked.Token).ConfigureAwait(false);
+            var result = await _transport.TranscribeAsync(request, linked.Token).ConfigureAwait(false);
             item.Result = result.Text;
             item.WasRetried = result.WasRetried;
             item.TransitionTo(DictationStatus.Recognized);

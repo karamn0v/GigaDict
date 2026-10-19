@@ -13,6 +13,22 @@ public sealed class HotkeyStateMachine(IReadOnlySet<int> combination, int escape
 
     public bool IsHeld { get { lock (_gate) return IsCombinationHeld(); } }
     public bool IsRecording { get { lock (_gate) return _recording; } }
+    // Insertion must wait for every key of the combination: a still-held modifier
+    // would turn typed text or Ctrl+V into another shortcut.
+    public bool IsAnyPartPressed { get { lock (_gate) return _pressed.Any(IsPart); } }
+
+    // Key-up events are not delivered while the secure desktop or a locked session
+    // is active. Forget the physical state so a stale key cannot block insertion.
+    public void Reset()
+    {
+        lock (_gate)
+        {
+            _pressed.Clear();
+            _suppressed.Clear();
+            _recording = false;
+            _cancelledUntilReleased = false;
+        }
+    }
 
     public HotkeyDecision ProcessKey(int virtualKey, bool down, bool injected)
     {

@@ -1,9 +1,7 @@
 using System.Text.Json.Serialization;
+using GigaDict.Core.Input;
 
 namespace GigaDict.Core.Configuration;
-
-[JsonConverter(typeof(JsonStringEnumConverter<TransportKind>))]
-public enum TransportKind { Http, WebSocket }
 
 [JsonConverter(typeof(JsonStringEnumConverter<InsertionMethod>))]
 public enum InsertionMethod { UnicodeSendInput, Clipboard }
@@ -21,7 +19,6 @@ public sealed record RetrySettings
 public sealed record AppSettings
 {
     public Uri ServerBaseUri { get; init; } = new("http://127.0.0.1:9876");
-    public TransportKind Transport { get; init; } = TransportKind.Http;
     public int ConnectTimeoutSeconds { get; init; } = 10;
     public int RecognitionTimeoutSeconds { get; init; } = 900;
     public RetrySettings Retry { get; init; } = new();
@@ -38,15 +35,27 @@ public sealed record AppSettings
 
     public IReadOnlyList<string> Validate()
     {
+        // A manually edited settings.json may contain nulls despite the non-nullable
+        // contract; every value used during startup must be rejected here.
         var errors = new List<string>();
-        if (ServerBaseUri.Scheme is not ("http" or "https")) errors.Add("Адрес сервера должен использовать HTTP или HTTPS.");
-        if (!ServerBaseUri.IsAbsoluteUri) errors.Add("Адрес сервера должен быть абсолютным.");
+        if (ServerBaseUri is null || !ServerBaseUri.IsAbsoluteUri) errors.Add("Адрес сервера должен быть абсолютным.");
+        else if (ServerBaseUri.Scheme is not ("http" or "https")) errors.Add("Адрес сервера должен использовать HTTP или HTTPS.");
         if (ConnectTimeoutSeconds is < 1 or > 300) errors.Add("Тайм-аут соединения: 1–300 секунд.");
         if (RecognitionTimeoutSeconds is < 10 or > 7200) errors.Add("Тайм-аут распознавания: 10–7200 секунд.");
         if (MaximumRecordingSeconds is < 1 or > 3600) errors.Add("Длительность записи: 1–3600 секунд.");
         if (MaximumQueueItems is < 1 or > 100) errors.Add("Размер очереди: 1–100.");
         if (MaximumAudioMemoryMiB is < 16 or > 2048) errors.Add("Лимит RAM: 16–2048 МиБ.");
-        if (Retry.MaxAttempts is < 1 or > 10) errors.Add("Число попыток: 1–10.");
+        if (HistorySize is < 0 or > 100) errors.Add("Размер истории: 0–100.");
+        if (Retry is null) errors.Add("Не заданы параметры повторов.");
+        else
+        {
+            if (Retry.MaxAttempts is < 1 or > 10) errors.Add("Число попыток: 1–10.");
+            if (Retry.InitialDelaySeconds is < 0 or > 300) errors.Add("Начальная задержка повтора: 0–300 секунд.");
+            if (Retry.MaximumDelaySeconds < Retry.InitialDelaySeconds || Retry.MaximumDelaySeconds > 3600)
+                errors.Add("Максимальная задержка повтора: от начальной до 3600 секунд.");
+        }
+        try { _ = HotkeyParser.Parse(Hotkey ?? ""); }
+        catch (FormatException exception) { errors.Add(exception.Message); }
         return errors;
     }
 }

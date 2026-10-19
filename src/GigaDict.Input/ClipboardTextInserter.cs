@@ -12,10 +12,9 @@ public static class ClipboardTextInserter
     public static async Task InsertAsync(string text, Func<bool> focusIsSafe, CancellationToken cancellationToken = default)
     {
         if (!focusIsSafe()) throw new InvalidOperationException("Фокус изменился перед вставкой.");
-        var previous = await RetryClipboardAsync(Clipboard.GetDataObject, cancellationToken).ConfigureAwait(true);
+        var previous = await RetryClipboardAsync(CaptureClipboard, cancellationToken).ConfigureAwait(true);
         var token = Guid.NewGuid().ToString("N");
-        var replacement = new DataObject();
-        replacement.SetText(text, TextDataFormat.UnicodeText);
+        var replacement = CreatePrivateText(text);
         replacement.SetData(OwnershipFormat, token);
         await ClipboardInsertionTransaction.ExecuteAsync(focusIsSafe,
             () => RetryClipboardAsync(() => { Clipboard.SetDataObject(replacement, true); return true; }, cancellationToken),
@@ -36,7 +35,26 @@ public static class ClipboardTextInserter
                     }, CancellationToken.None).ConfigureAwait(true);
                 }
                 catch (ExternalException) { /* A busy clipboard or another owner's data must not be overwritten. */ }
-            }, cancellationToken).ConfigureAwait(true);
+            }, cancellationToken: cancellationToken).ConfigureAwait(true);
+    }
+
+    public static DataObject CreatePrivateText(string text)
+    {
+        var data = new DataObject();
+        data.SetText(text, TextDataFormat.UnicodeText);
+        foreach (var (format, value) in ClipboardPrivacyFormats.Create()) data.SetData(format, false, new MemoryStream(value));
+        return data;
+    }
+
+    private static DataObject? CaptureClipboard()
+    {
+        var current = Clipboard.GetDataObject();
+        if (current is null) return null;
+        var snapshot = ClipboardSnapshot.Capture(current.GetFormats(false), format => current.GetData(format, false));
+        if (snapshot.Count == 0) return null;
+        var copy = new DataObject();
+        foreach (var (format, value) in snapshot) copy.SetData(format, false, value);
+        return copy;
     }
 
     private static async Task<T> RetryClipboardAsync<T>(Func<T> operation, CancellationToken cancellationToken)

@@ -5,8 +5,6 @@ namespace GigaDict.Recognition;
 
 public sealed class RetryingTransport(ITranscriptionTransport inner, RetrySettings settings) : ITranscriptionTransport
 {
-    public TransportKind Kind => inner.Kind;
-
     public async Task<RecognitionResult> TranscribeAsync(RecognitionRequest request, CancellationToken cancellationToken)
     {
         for (var attempt = 1; ; attempt++)

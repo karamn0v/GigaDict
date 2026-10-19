@@ -71,6 +71,32 @@ public sealed class HotkeyStateMachineTests
         Assert.False(state.ProcessKey(0x1B, down: true, injected: false).Suppress);
     }
 
+    [Fact]
+    public void ModifierStillHeldAfterCombinationReleaseBlocksInsertion()
+    {
+        var state = new HotkeyStateMachine(new HashSet<int> { Ctrl, 0x10, Space });
+        state.KeyDown(0xA2, false); state.KeyDown(0xA0, false); state.KeyDown(Space, false);
+        state.KeyUp(Space, false);
+        Assert.False(state.IsHeld);
+        Assert.True(state.IsAnyPartPressed);
+        state.KeyUp(0xA2, false); state.KeyUp(0xA0, false);
+        Assert.False(state.IsAnyPartPressed);
+    }
+
+    [Fact]
+    public void ResetForgetsKeyWhoseReleaseWasLost()
+    {
+        const int f8 = 0x77;
+        var state = new HotkeyStateMachine(new HashSet<int> { f8 });
+        Assert.Equal(HotkeyAction.StartRecording, state.ProcessKey(f8, down: true, injected: false).Action);
+        // The key-up happened on the secure desktop and never reached the hook.
+        state.Reset();
+        Assert.False(state.IsAnyPartPressed);
+        Assert.False(state.IsRecording);
+        Assert.Equal(HotkeyAction.StartRecording, state.ProcessKey(f8, down: true, injected: false).Action);
+        Assert.Equal(HotkeyAction.StopRecording, state.ProcessKey(f8, down: false, injected: false).Action);
+    }
+
     [Theory]
     [InlineData(0xA2, 0xA0)]
     [InlineData(0xA3, 0xA1)]

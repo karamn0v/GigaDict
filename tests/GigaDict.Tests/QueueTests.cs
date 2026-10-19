@@ -10,7 +10,7 @@ public sealed class QueueTests
     public async Task ProcessesFifoWithSingleConcurrentRecognition()
     {
         var transport = new FakeTransport();
-        await using var queue = new RecognitionQueue([transport], 10, 1024, 10);
+        await using var queue = new RecognitionQueue(transport, 10, 1024, 10);
         var received = new List<long>();
         queue.ResultReady += task => { received.Add(task.Sequence); task.TransitionTo(DictationStatus.SavedToHistory); return Task.CompletedTask; };
         for (var i = 1; i <= 3; i++) Assert.True(queue.TryEnqueue(NewTask(i, 10)));
@@ -23,7 +23,7 @@ public sealed class QueueTests
     public async Task EnforcesItemAndMemoryLimits()
     {
         var transport = new FakeTransport(block: true);
-        await using var queue = new RecognitionQueue([transport], 2, 15, 10);
+        await using var queue = new RecognitionQueue(transport, 2, 15, 10);
         Assert.True(queue.TryEnqueue(NewTask(1, 10)));
         Assert.False(queue.TryEnqueue(NewTask(2, 10)));
         transport.Release();
@@ -32,7 +32,7 @@ public sealed class QueueTests
     [Fact]
     public async Task HistoryUpdateExposesInsertionError()
     {
-        await using var queue = new RecognitionQueue([new FakeTransport()], 10, 1024, 10);
+        await using var queue = new RecognitionQueue(new FakeTransport(), 10, 1024, 10);
         using var task = NewTask(1, 2);
         task.Error = "Ошибка вставки: тест";
         queue.UpdateHistory(task);
@@ -42,7 +42,7 @@ public sealed class QueueTests
     [Fact]
     public async Task ConsumerNeverSeesAnUnqueuedTask()
     {
-        await using var queue = new RecognitionQueue([new ImmediateTransport()], 1, 1024, 1);
+        await using var queue = new RecognitionQueue(new ImmediateTransport(), 1, 1024, 1);
         for (var index = 0; index < 30_000; index++)
         {
             using var item = NewTask(index, 2);
@@ -62,7 +62,7 @@ public sealed class QueueTests
     [InlineData(true, true)]
     public async Task ResultHandoffFailurePreservesResultAndWorker(bool waiting, bool cancelled)
     {
-        await using var queue = new RecognitionQueue([new ImmediateTransport()], 2, 1024, 10);
+        await using var queue = new RecognitionQueue(new ImmediateTransport(), 2, 1024, 10);
         queue.ResultReady += item =>
         {
             if (item.Sequence != 1) return Task.CompletedTask;
@@ -85,7 +85,7 @@ public sealed class QueueTests
     public async Task LimitsChangeImmediatelyWithoutReplacingWorkerOrDroppingAcceptedAudio()
     {
         var transport = new FakeTransport(block: true);
-        await using var queue = new RecognitionQueue([transport], 1, 10, 10);
+        await using var queue = new RecognitionQueue(transport, 1, 10, 10);
         using var first = NewTask(1, 10);
         using var second = NewTask(2, 10);
         using var rejected = NewTask(3, 1);
@@ -112,7 +112,7 @@ public sealed class QueueTests
     [Fact]
     public async Task DisposingQueueClearsAccountingAndRejectsNewTasks()
     {
-        var queue = new RecognitionQueue([new FakeTransport(block: true)], 2, 1024, 10);
+        var queue = new RecognitionQueue(new FakeTransport(block: true), 2, 1024, 10);
         using var first = NewTask(1, 10);
         using var second = NewTask(2, 10);
         Assert.True(queue.TryEnqueue(first));
@@ -139,7 +139,6 @@ public sealed class QueueTests
         private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _active;
         public int MaximumConcurrency { get; private set; }
-        public TransportKind Kind => TransportKind.Http;
         public async Task<RecognitionResult> TranscribeAsync(RecognitionRequest request, CancellationToken cancellationToken)
         {
             var active = Interlocked.Increment(ref _active);
@@ -152,7 +151,6 @@ public sealed class QueueTests
 
     private sealed class ImmediateTransport : ITranscriptionTransport
     {
-        public TransportKind Kind => TransportKind.Http;
         public Task<RecognitionResult> TranscribeAsync(RecognitionRequest request, CancellationToken cancellationToken) =>
             Task.FromResult(new RecognitionResult("ok"));
     }

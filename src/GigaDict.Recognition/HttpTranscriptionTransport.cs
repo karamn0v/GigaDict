@@ -1,14 +1,11 @@
 using System.Net;
 using System.Text.Json;
-using GigaDict.Core.Configuration;
 using GigaDict.Core.Tasks;
 
 namespace GigaDict.Recognition;
 
 public sealed class HttpTranscriptionTransport(HttpClient? httpClient = null) : ITranscriptionTransport
 {
-    public TransportKind Kind => TransportKind.Http;
-
     public async Task<RecognitionResult> TranscribeAsync(RecognitionRequest request, CancellationToken cancellationToken)
     {
         using var ownedClient = httpClient is null ? CreateClient(request.ConnectTimeout) : null;

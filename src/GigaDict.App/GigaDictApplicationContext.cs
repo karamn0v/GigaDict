@@ -65,9 +65,8 @@ internal sealed class GigaDictApplicationContext : ApplicationContext
 
     private RecognitionQueue CreateQueue(AppSettings settings)
     {
-        var http = new RetryingTransport(new HttpTranscriptionTransport(), settings.Retry);
-        var ws = new RetryingTransport(new WebSocketTranscriptionTransport(), settings.Retry);
-        var queue = new RecognitionQueue([http, ws], settings.MaximumQueueItems, settings.MaximumAudioMemoryMiB * 1024L * 1024L, settings.HistorySize);
+        var transport = new RetryingTransport(new HttpTranscriptionTransport(), settings.Retry);
+        var queue = new RecognitionQueue(transport, settings.MaximumQueueItems, settings.MaximumAudioMemoryMiB * 1024L * 1024L, settings.HistorySize);
         queue.ResultReady += item => { item.TransitionTo(DictationStatus.WaitingForInsertion); return _insertions.Writer.WriteAsync(item, _shutdown.Token).AsTask(); };
         return queue;
     }
@@ -132,7 +131,7 @@ internal sealed class GigaDictApplicationContext : ApplicationContext
         {
             await foreach (var item in _insertions.Reader.ReadAllAsync(_shutdown.Token))
             {
-                while (_hook.IsHeld) await Task.Delay(25, _shutdown.Token);
+                while (_hook.IsAnyKeyHeld) await Task.Delay(25, _shutdown.Token);
                 var blockReason = GetInsertionBlockReason(item);
                 if (blockReason is not null)
                 {
@@ -148,7 +147,7 @@ internal sealed class GigaDictApplicationContext : ApplicationContext
                     await InvokeOnUiAsync(async () =>
                     {
                         var safe = () => !_exiting && _sessionAvailable && item.AutomaticInsertionAllowed &&
-                            _focus.IsStillSafe(item.Id) && !_hook.IsHeld;
+                            _focus.IsStillSafe(item.Id) && !_hook.IsAnyKeyHeld;
                         var text = TextBoundary.Prepare(item.Result!, null, null, false, item.Settings.AutomaticSpaces);
                         if (item.Settings.InsertionMethod == InsertionMethod.UnicodeSendInput) UnicodeTextInserter.Insert(text, safe);
                         else await ClipboardTextInserter.InsertAsync(text, safe, _shutdown.Token);
@@ -202,7 +201,7 @@ internal sealed class GigaDictApplicationContext : ApplicationContext
     private void CopyLast()
     {
         var text = _queue.History.FirstOrDefault(x => !string.IsNullOrEmpty(x.Text))?.Text;
-        if (text is not null) Clipboard.SetText(text);
+        if (text is not null) Clipboard.SetDataObject(ClipboardTextInserter.CreatePrivateText(text), true);
     }
 
     private void ShowHistory()
@@ -248,6 +247,8 @@ internal sealed class GigaDictApplicationContext : ApplicationContext
     private void OnSessionSwitch(object sender, SessionSwitchEventArgs args)
     {
         _sessionAvailable = args.Reason is SessionSwitchReason.SessionUnlock or SessionSwitchReason.RemoteConnect or SessionSwitchReason.SessionLogon;
+        // Key-up events released on the secure desktop never reach the hook.
+        _hook.Reset();
         if (!_sessionAvailable)
         {
             _focus.InvalidateAll();

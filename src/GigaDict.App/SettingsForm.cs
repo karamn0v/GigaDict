@@ -1,12 +1,12 @@
 using GigaDict.Audio;
 using GigaDict.Core.Configuration;
+using GigaDict.Core.Input;
 
 namespace GigaDict.App;
 
 internal sealed class SettingsForm : Form
 {
     private readonly TextBox _server = new() { Width = 320 };
-    private readonly ComboBox _transport = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly ComboBox _device = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 320 };
     private readonly TextBox _hotkey = new() { Width = 150 };
     private readonly ComboBox _insertion = new() { DropDownStyle = ComboBoxStyle.DropDownList };
@@ -24,7 +24,6 @@ internal sealed class SettingsForm : Form
         _original = settings;
         Text = "Настройки GigaDict";
         Width = 520; Height = 520; StartPosition = FormStartPosition.CenterScreen;
-        _transport.Items.AddRange(Enum.GetNames<TransportKind>());
         _insertion.Items.AddRange(Enum.GetNames<InsertionMethod>());
         _focusProtection.Items.AddRange([
             new FocusModeItem(FocusProtectionMode.Strict, "Строгий"),
@@ -32,7 +31,6 @@ internal sealed class SettingsForm : Form
         ]);
         LoadDevices();
         _server.Text = settings.ServerBaseUri.ToString();
-        _transport.SelectedItem = settings.Transport.ToString();
         _hotkey.Text = settings.Hotkey;
         _insertion.SelectedItem = settings.InsertionMethod.ToString();
         _focusProtection.SelectedItem = _focusProtection.Items.Cast<FocusModeItem>().First(x => x.Mode == settings.FocusProtection);
@@ -49,7 +47,7 @@ internal sealed class SettingsForm : Form
         var save = new Button { Text = "Сохранить", DialogResult = DialogResult.OK, AutoSize = true };
         save.Click += (sender, args) => { if (!TryBuild(out _)) DialogResult = DialogResult.None; };
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), ColumnCount = 2, AutoScroll = true };
-        Add(layout, "Адрес GigaSTT", _server); Add(layout, "Транспорт", _transport); Add(layout, "Микрофон", _device);
+        Add(layout, "Адрес GigaSTT", _server); Add(layout, "Микрофон", _device);
         Add(layout, "Горячая клавиша", _hotkey); Add(layout, "Метод вставки", _insertion);
         Add(layout, "Защита фокуса", _focusProtection); Add(layout, "", _spaces);
         Add(layout, "Макс. длительность, с", _duration); Add(layout, "Размер очереди", _queue); Add(layout, "Лимит RAM, МиБ", _memory);
@@ -62,10 +60,9 @@ internal sealed class SettingsForm : Form
         settings = _original;
         try
         {
-            _ = HotkeyParser.Parse(_hotkey.Text);
             settings = _original with
             {
-                ServerBaseUri = new Uri(_server.Text, UriKind.Absolute), Transport = Enum.Parse<TransportKind>((string)_transport.SelectedItem!),
+                ServerBaseUri = new Uri(_server.Text, UriKind.Absolute),
                 CaptureDeviceId = (_device.SelectedItem as DeviceItem)?.Id, Hotkey = _hotkey.Text,
                 InsertionMethod = Enum.Parse<InsertionMethod>((string)_insertion.SelectedItem!),
                 FocusProtection = ((FocusModeItem)_focusProtection.SelectedItem!).Mode, AutomaticSpaces = _spaces.Checked,

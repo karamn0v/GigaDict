@@ -1,6 +1,5 @@
 using System.Net;
 using System.Text;
-using GigaDict.Core.Configuration;
 using GigaDict.Core.Tasks;
 using GigaDict.Recognition;
 
@@ -55,7 +54,7 @@ public sealed class HttpTransportTests
         await Assert.ThrowsAsync<TranscriptionException>(() => malformed.TranscribeAsync(Request([0, 0]), default));
     }
 
-    private static RecognitionRequest Request(byte[] pcm) => new(Guid.NewGuid(), pcm, new Uri("http://localhost:9876"), TransportKind.Http, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5));
+    private static RecognitionRequest Request(byte[] pcm) => new(Guid.NewGuid(), pcm, new Uri("http://localhost:9876"), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5));
 
     private sealed class DelegateHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler) : HttpMessageHandler
     {

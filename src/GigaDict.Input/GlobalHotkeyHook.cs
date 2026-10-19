@@ -20,7 +20,8 @@ public sealed class GlobalHotkeyHook : IDisposable
     }
 
     public event EventHandler<HotkeyAction>? Action;
-    public bool IsHeld => _state.IsHeld;
+    public bool IsAnyKeyHeld => _state.IsAnyPartPressed;
+    public void Reset() => _state.Reset();
 
     public void Install()
     {
