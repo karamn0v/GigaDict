@@ -16,9 +16,14 @@ public sealed class RetryingTransport(ITranscriptionTransport inner, RetrySettin
             }
             catch (TransientTranscriptionException exception) when (attempt < settings.MaxAttempts)
             {
+                var maximum = TimeSpan.FromSeconds(settings.MaximumDelaySeconds);
                 var exponential = TimeSpan.FromSeconds(Math.Min(settings.MaximumDelaySeconds,
                     settings.InitialDelaySeconds * Math.Pow(2, attempt - 1)));
-                await Task.Delay(exception.RetryAfter ?? exponential, cancellationToken).ConfigureAwait(false);
+                // Retry-After comes from the server; an unbounded value would stall the FIFO.
+                var delay = exception.RetryAfter is { } retryAfter
+                    ? TimeSpan.FromTicks(Math.Clamp(retryAfter.Ticks, 0, maximum.Ticks))
+                    : exponential;
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
         }
     }

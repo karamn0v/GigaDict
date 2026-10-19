@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using GigaDict.Core.Input;
 
 namespace GigaDict.Input;
 
@@ -9,10 +10,10 @@ public static class UnicodeTextInserter
     {
         ArgumentNullException.ThrowIfNull(text);
         const int batchCharacters = 64;
-        for (var offset = 0; offset < text.Length; offset += batchCharacters)
+        foreach (var batch in UnicodeBatches.Split(text, batchCharacters))
         {
             if (!focusIsSafe()) throw new InvalidOperationException("Фокус изменился во время вставки.");
-            var length = Math.Min(batchCharacters, text.Length - offset);
+            var (offset, length) = batch.GetOffsetAndLength(text.Length);
             var inputs = new NativeMethods.Input[length * 2];
             for (var index = 0; index < length; index++)
             {

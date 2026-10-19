@@ -23,7 +23,11 @@ public sealed class HttpTranscriptionTransport(HttpClient? httpClient = null) : 
         }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new TransientTranscriptionException("Истекло время ожидания распознавания.", null, exception);
+            // After a full recognition timeout the single inference slot may still be
+            // busy with this audio; retrying would block the FIFO for another period.
+            // Only a connect timeout (nothing was processed) is worth repeating.
+            if (timeout.IsCancellationRequested) throw RecognitionTimedOut(exception);
+            throw new TransientTranscriptionException("Истекло время подключения к GigaSTT.", null, exception);
         }
         catch (HttpRequestException exception)
         {
@@ -42,9 +46,9 @@ public sealed class HttpTranscriptionTransport(HttpClient? httpClient = null) : 
                 throw new TranscriptionException($"Ошибка GigaSTT HTTP {(int)response.StatusCode}.");
             }
 
-            await using var body = await response.Content.ReadAsStreamAsync(timeout.Token).ConfigureAwait(false);
             try
             {
+                await using var body = await response.Content.ReadAsStreamAsync(timeout.Token).ConfigureAwait(false);
                 using var json = await JsonDocument.ParseAsync(body, cancellationToken: timeout.Token).ConfigureAwait(false);
                 if (!json.RootElement.TryGetProperty("text", out var textNode) || textNode.ValueKind != JsonValueKind.String)
                     throw new TranscriptionException("Ответ GigaSTT не содержит поле text.");
@@ -56,8 +60,15 @@ public sealed class HttpTranscriptionTransport(HttpClient? httpClient = null) : 
             {
                 throw new TranscriptionException("GigaSTT вернул некорректный JSON.", exception);
             }
+            catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw RecognitionTimedOut(exception);
+            }
         }
     }
+
+    private static TranscriptionException RecognitionTimedOut(Exception inner) =>
+        new("Истекло время ожидания распознавания.", inner);
 
     internal static HttpClient CreateClient(TimeSpan connectTimeout) =>
         new(new SocketsHttpHandler { ConnectTimeout = connectTimeout }) { Timeout = Timeout.InfiniteTimeSpan };

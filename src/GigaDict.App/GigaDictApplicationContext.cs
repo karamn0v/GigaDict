@@ -246,7 +246,7 @@ internal sealed class GigaDictApplicationContext : ApplicationContext
 
     private void OnSessionSwitch(object sender, SessionSwitchEventArgs args)
     {
-        _sessionAvailable = args.Reason is SessionSwitchReason.SessionUnlock or SessionSwitchReason.RemoteConnect or SessionSwitchReason.SessionLogon;
+        _sessionAvailable = SessionAvailability.Next(_sessionAvailable, (SessionChange)args.Reason);
         // Key-up events released on the secure desktop never reach the hook.
         _hook.Reset();
         if (!_sessionAvailable)

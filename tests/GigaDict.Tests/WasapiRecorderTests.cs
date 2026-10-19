@@ -74,6 +74,30 @@ public sealed class WasapiRecorderTests
         Assert.True(capture.Disposed);
     }
 
+    [Fact]
+    public async Task HungDriverDoesNotBlockStopForever()
+    {
+        var capture = new FakeCapture { StopImmediately = false };
+        var disposeEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        // NAudio Dispose joins the capture thread; simulate that thread being hung.
+        capture.OnDispose = () => { disposeEntered.TrySetResult(); release.Wait(TimeSpan.FromSeconds(10)); };
+        var next = new FakeCapture();
+        var captures = new Queue<FakeCapture>([capture, next]);
+        using var recorder = new WasapiRecorder(_ => captures.Dequeue(), TimeSpan.FromMilliseconds(100));
+        recorder.Start(null, TimeSpan.FromSeconds(1), 32000);
+        capture.Emit(new byte[4]);
+        var stop = recorder.StopAsync();
+        Assert.Same(stop, await Task.WhenAny(stop, Task.Delay(TimeSpan.FromSeconds(5))));
+        await Assert.ThrowsAsync<TimeoutException>(() => stop);
+        await disposeEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // The recorder is free for the next dictation while the old capture is still disposing.
+        recorder.Start(null, TimeSpan.FromSeconds(1), 32000);
+        next.Emit(new byte[6]);
+        Assert.Equal(6, (await recorder.StopAsync()).Length);
+        release.Set();
+    }
+
     private sealed class FakeCapture : IWaveIn
     {
         public event EventHandler<WaveInEventArgs>? DataAvailable;

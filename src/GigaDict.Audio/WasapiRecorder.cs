@@ -6,9 +6,10 @@ namespace GigaDict.Audio;
 
 public sealed record CaptureDevice(string Id, string Name, bool IsDefault);
 
-public sealed class WasapiRecorder(Func<string?, IWaveIn>? captureFactory = null) : IAudioRecorder, IDisposable
+public sealed class WasapiRecorder(Func<string?, IWaveIn>? captureFactory = null, TimeSpan? stopTimeout = null) : IAudioRecorder, IDisposable
 {
     private readonly Func<string?, IWaveIn> _captureFactory = captureFactory ?? CreateCapture;
+    private readonly TimeSpan _stopTimeout = stopTimeout ?? TimeSpan.FromSeconds(5);
     private readonly object _gate = new();
     private IWaveIn? _capture;
     private MemoryStream? _raw;
@@ -56,7 +57,17 @@ public sealed class WasapiRecorder(Func<string?, IWaveIn>? captureFactory = null
             stopped = _stopped.Task;
         }
         capture.StopRecording();
-        await stopped.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try { await stopped.WaitAsync(_stopTimeout, cancellationToken).ConfigureAwait(false); }
+        catch (TimeoutException)
+        {
+            // A driver that never reports RecordingStopped must not block the
+            // sequential command queue. Dispose joins the hung capture thread, so
+            // run it in the background after detaching the capture.
+            IWaveIn? hung;
+            lock (_gate) hung = ReferenceEquals(capture, _capture) ? DetachCapture() : null;
+            if (hung is not null) _ = Task.Run(hung.Dispose, CancellationToken.None);
+            throw new TimeoutException("Микрофон не остановился вовремя.");
+        }
         byte[] raw;
         WaveFormat format;
         lock (_gate)
