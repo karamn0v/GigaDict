@@ -16,6 +16,8 @@ dotnet publish src/GigaDict.App/GigaDict.App.csproj -c Release -r win-x64 --self
 
 Запустите `artifacts\publish\win-x64\GigaDict.exe`. Администратор и установленный Runtime не нужны. После запуска приложение находится в системном трее; настройки хранятся отдельно в `%LOCALAPPDATA%\GigaDict\settings.json`.
 
+«Запускать при входе в Windows» записывает путь к exe в `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. Галка показывает фактическое состояние, включая отключение в «Диспетчере задач»; при каждом запуске путь обновляется, если exe перенесли. Для автозапуска держите `GigaDict.exe` на локальном диске (например, `%LOCALAPPDATA%\Programs\GigaDict`): сетевые папки, в том числе `\\wsl.localhost`, при входе могут быть недоступны.
+
 ## Использование
 
 1. Откройте «Настройки» из трея и укажите `http://адрес-NAS:9876`.

@@ -36,7 +36,7 @@ internal sealed class GigaDictApplicationContext : ApplicationContext
     internal GigaDictApplicationContext()
     {
         _store = new SettingsStore(_settingsPath);
-        _settings = LoadSettings();
+        _settings = SyncAutoStart(LoadSettings());
         _appIcon = LoadAppIcon();
         _trayIcons = new TrayIconSet(_appIcon);
         _dispatcher.CreateControl();
@@ -220,7 +220,7 @@ internal sealed class GigaDictApplicationContext : ApplicationContext
 
     private async Task ShowSettingsAsync()
     {
-        using var form = new SettingsForm(_settings);
+        using var form = new SettingsForm(SyncAutoStart(_settings));
         form.Icon = _appIcon;
         if (form.ShowDialog() != DialogResult.OK || !form.TryBuild(out var updated)) return;
         await _store.SaveAsync(updated);
@@ -243,6 +243,21 @@ internal sealed class GigaDictApplicationContext : ApplicationContext
     {
         try { return _store.LoadAsync().GetAwaiter().GetResult(); }
         catch { return new AppSettings(); }
+    }
+
+    // Refresh the path of a moved EXE and show what Windows will actually do at
+    // logon: Task Manager may have disabled the entry behind GigaDict's back.
+    private static AppSettings SyncAutoStart(AppSettings settings)
+    {
+        try
+        {
+            AutoStartManager.RefreshPath();
+            return settings with { AutoStart = AutoStartManager.IsEnabled() };
+        }
+        catch (Exception exception) when (exception is UnauthorizedAccessException or System.Security.SecurityException or IOException)
+        {
+            return settings;
+        }
     }
 
     private void OnSessionSwitch(object sender, SessionSwitchEventArgs args)
