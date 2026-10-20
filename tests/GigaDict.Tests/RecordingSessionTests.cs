@@ -39,7 +39,7 @@ public sealed class RecordingSessionTests
         focus.Current = originalFocus with { RuntimeId = "next" };
         Dispatch(down: true);
         Assert.Equal(1, recorder.Starts);
-        recorder.Stopped.SetResult([0, 0]);
+        recorder.Stopped.SetResult(new byte[RecordingSessionController.MinimumAudioBytes]);
         await actions.DisposeAsync();
         using var item = Assert.IsType<DictationTask>(completed);
         Assert.Empty(errors);
@@ -83,6 +83,22 @@ public sealed class RecordingSessionTests
         Assert.Empty(focus.Tracked);
         controller.Start(new AppSettings());
         controller.Cancel();
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(RecordingSessionController.MinimumAudioBytes - 2)]
+    public async Task AccidentalTapIsDroppedAndClearedWithoutQueueing(int length)
+    {
+        var recorder = new FakeRecorder();
+        var focus = new FakeFocus();
+        var controller = new RecordingSessionController(recorder, focus);
+        controller.Start(new AppSettings());
+        var audio = Enumerable.Repeat((byte)7, length).ToArray();
+        recorder.Stopped.SetResult(audio);
+        Assert.Null(await controller.CompleteAsync());
+        Assert.False(controller.IsRecording);
+        Assert.All(audio, value => Assert.Equal(0, value));
     }
 
     private sealed class FakeRecorder : IAudioRecorder

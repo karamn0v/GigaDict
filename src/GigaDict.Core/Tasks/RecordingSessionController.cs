@@ -13,6 +13,10 @@ public interface IAudioRecorder
 // All operations are called by the application's sequential action queue.
 public sealed class RecordingSessionController(IAudioRecorder recorder, IFocusGuard focus)
 {
+    // 0.3 s of PCM16 mono 16 kHz. Accidental taps are dropped locally instead of
+    // occupying the single NAS slot and ending with "empty result".
+    public const int MinimumAudioBytes = 9600;
+
     private Session? _current;
     private long _sequence;
 
@@ -42,7 +46,12 @@ public sealed class RecordingSessionController(IAudioRecorder recorder, IFocusGu
         try
         {
             var audio = await recorder.StopAsync(cancellationToken).ConfigureAwait(false);
-            if (audio.Length == 0) { focus.Forget(session.Id); return null; }
+            if (audio.Length < MinimumAudioBytes)
+            {
+                Array.Clear(audio);
+                focus.Forget(session.Id);
+                return null;
+            }
             var item = new DictationTask(++_sequence, audio, session.Focus, session.Settings, session.Id);
             if (!focus.IsStillSafe(session.Id)) item.InvalidateInsertion();
             return item;

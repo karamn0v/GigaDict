@@ -27,13 +27,22 @@ public sealed class SettingsStore(string path)
         var directory = Path.GetDirectoryName(path) ?? throw new InvalidOperationException("Некорректный путь настроек.");
         Directory.CreateDirectory(directory);
         var temporary = path + ".tmp";
-        await using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None,
-                         16 * 1024, FileOptions.WriteThrough | FileOptions.Asynchronous))
+        try
         {
-            await JsonSerializer.SerializeAsync(stream, settings, Options, cancellationToken).ConfigureAwait(false);
-            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            await using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None,
+                             16 * 1024, FileOptions.WriteThrough | FileOptions.Asynchronous))
+            {
+                await JsonSerializer.SerializeAsync(stream, settings, Options, cancellationToken).ConfigureAwait(false);
+                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
+            File.Move(temporary, path, true);
         }
-        File.Move(temporary, path, true);
+        catch
+        {
+            // Do not leave a stray settings.json.tmp behind a failed save.
+            try { File.Delete(temporary); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            throw;
+        }
     }
 }
 

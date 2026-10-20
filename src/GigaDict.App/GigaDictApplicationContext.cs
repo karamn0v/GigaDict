@@ -110,7 +110,7 @@ internal sealed class GigaDictApplicationContext : ApplicationContext
         DictationTask? task;
         try { task = await _recording.CompleteAsync(_shutdown.Token); }
         catch (Exception exception) { SetState("Ошибка микрофона: " + exception.Message, TrayState.Error); return; }
-        if (task is null) { SetState("Пустая запись", TrayState.Warning); return; }
+        if (task is null) { SetState("Запись слишком короткая", TrayState.Warning); return; }
         if (!_queue.TryEnqueue(task))
         {
             task.Dispose(); _focus.Forget(task.Id); SetState("Очередь или лимит RAM заполнены", TrayState.Error); return;
@@ -223,7 +223,14 @@ internal sealed class GigaDictApplicationContext : ApplicationContext
         using var form = new SettingsForm(SyncAutoStart(_settings));
         form.Icon = _appIcon;
         if (form.ShowDialog() != DialogResult.OK || !form.TryBuild(out var updated)) return;
-        await _store.SaveAsync(updated);
+        try { await _store.SaveAsync(updated); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            // Nothing is applied: the running settings must match the file on disk.
+            MessageBox.Show($"Не удалось сохранить настройки в {_settingsPath}:{Environment.NewLine}{exception.Message}{Environment.NewLine}{Environment.NewLine}Изменения не применены.",
+                "GigaDict", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
         PostRecordingAction(() => InvokeOnUiAsync(() =>
         {
             if (_exiting) return Task.CompletedTask;

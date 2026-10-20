@@ -46,3 +46,17 @@ public sealed class AutoStartRulesTests
     public void NetworkPathIsRecognized(string path, bool expected) =>
         Assert.Equal(expected, AutoStartRules.IsNetworkPath(path));
 }
+
+public sealed class CaptureDeviceSelectionTests
+{
+    [Fact]
+    public void UnpluggedSavedMicrophoneIsKept() =>
+        Assert.True(CaptureDeviceSelection.IsUnavailable("{usb-mic}", [null, "{built-in}"]));
+
+    [Fact]
+    public void ConnectedOrDefaultMicrophoneNeedsNoPlaceholder()
+    {
+        Assert.False(CaptureDeviceSelection.IsUnavailable("{usb-mic}", [null, "{usb-mic}"]));
+        Assert.False(CaptureDeviceSelection.IsUnavailable(null, [null]));
+    }
+}

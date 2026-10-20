@@ -50,7 +50,11 @@ internal sealed class SettingsForm : Form
         _autoStart.CheckedChanged += (_, _) => UpdateAutoStartHint();
         UpdateAutoStartHint();
         if (settings.CaptureDeviceId is { } id)
-            _device.SelectedItem = _device.Items.Cast<DeviceItem>().FirstOrDefault(x => x.Id == id);
+        {
+            if (CaptureDeviceSelection.IsUnavailable(id, _device.Items.Cast<DeviceItem>().Select(x => x.Id)))
+                _device.Items.Add(new DeviceItem(id, CaptureDeviceSelection.UnavailableName));
+            _device.SelectedItem = _device.Items.Cast<DeviceItem>().First(x => x.Id == id);
+        }
 
         var test = new Button { Text = "Проверить соединение", AutoSize = true };
         test.Click += async (_, _) => await TestConnectionAsync();

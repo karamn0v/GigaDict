@@ -32,6 +32,22 @@ public sealed class SettingsValidationTests
         Assert.NotEmpty((new AppSettings() with { ServerBaseUri = new Uri("relative", UriKind.Relative) }).Validate());
 
     [Fact]
+    public async Task FailedSaveReportsErrorAndLeavesNoTemporaryFile()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"gigadict-settings-{Guid.NewGuid():N}");
+        // The target path is an existing directory, so the final rename must fail.
+        var path = Path.Combine(directory, "settings.json");
+        Directory.CreateDirectory(path);
+        try
+        {
+            var exception = await Record.ExceptionAsync(() => new SettingsStore(path).SaveAsync(new AppSettings()));
+            Assert.True(exception is IOException or UnauthorizedAccessException, exception?.GetType().Name);
+            Assert.False(File.Exists(path + ".tmp"));
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    [Fact]
     public async Task FileFromVersionWithWebSocketTransportStillLoads()
     {
         var path = Path.Combine(Path.GetTempPath(), $"gigadict-settings-{Guid.NewGuid():N}.json");

@@ -160,11 +160,17 @@ public sealed class WasapiRecorder(Func<string?, IWaveIn>? captureFactory = null
     private static IWaveIn CreateCapture(string? deviceId)
     {
         using var enumerator = new MMDeviceEnumerator();
-        var device = deviceId is null
-            ? enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Communications)
-            : enumerator.GetDevice(deviceId);
+        if (deviceId is null) return new WasapiCapture(enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Communications));
+        MMDevice device;
+        try { device = enumerator.GetDevice(deviceId); }
+        catch (System.Runtime.InteropServices.COMException exception) { throw SelectedDeviceUnavailable(exception); }
+        // No silent fallback to another microphone: the user chose this one.
+        if (device.State != DeviceState.Active) throw SelectedDeviceUnavailable(null);
         return new WasapiCapture(device);
     }
+
+    private static InvalidOperationException SelectedDeviceUnavailable(Exception? inner) =>
+        new("Выбранный микрофон не подключён. Подключите его или выберите другой в настройках.", inner);
 
     private static MMDevice? TryGetDefault(MMDeviceEnumerator enumerator)
     {
