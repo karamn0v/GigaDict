@@ -12,7 +12,7 @@ public sealed class WasapiRecorder(Func<string?, IWaveIn>? captureFactory = null
     private readonly TimeSpan _stopTimeout = stopTimeout ?? TimeSpan.FromSeconds(5);
     private readonly object _gate = new();
     private IWaveIn? _capture;
-    private MemoryStream? _raw;
+    private ChunkedAudioBuffer? _raw;
     private WaveFormat? _format;
     private long _maximumRawBytes;
     private TaskCompletionSource _stopped = NewCompletion();
@@ -38,7 +38,7 @@ public sealed class WasapiRecorder(Func<string?, IWaveIn>? captureFactory = null
             _format = _capture.WaveFormat;
             var estimatedRaw = checked((long)(_format.AverageBytesPerSecond * Math.Ceiling(maximumDuration.TotalSeconds)));
             _maximumRawBytes = Math.Min(estimatedRaw, maximumPcmBytes * Math.Max(1, _format.AverageBytesPerSecond / 32000));
-            _raw = new MemoryStream((int)Math.Min(_maximumRawBytes, 16 * 1024 * 1024));
+            _raw = new ChunkedAudioBuffer();
             _stopped = NewCompletion();
             _limitReached = false;
             _capture.DataAvailable += OnDataAvailable;
@@ -68,12 +68,14 @@ public sealed class WasapiRecorder(Func<string?, IWaveIn>? captureFactory = null
             if (hung is not null) _ = Task.Run(hung.Dispose, CancellationToken.None);
             throw new TimeoutException("Микрофон не остановился вовремя.");
         }
-        byte[] raw;
+        ChunkedAudioBuffer raw;
         WaveFormat format;
         lock (_gate)
         {
             if (!ReferenceEquals(capture, _capture)) throw new InvalidOperationException("Запись отменена.");
-            raw = _raw?.ToArray() ?? [];
+            // Take ownership of the buffer: no contiguous copy of the raw capture.
+            raw = _raw ?? new ChunkedAudioBuffer();
+            _raw = null;
             format = _format ?? throw new InvalidOperationException();
             DetachCapture();
         }
@@ -82,9 +84,10 @@ public sealed class WasapiRecorder(Func<string?, IWaveIn>? captureFactory = null
             // NAudio Dispose waits for the capture thread. Never hold the lock
             // needed by its callbacks while joining that thread or resampling.
             capture.Dispose();
-            return Pcm16Converter.Convert(raw, format);
+            using var stream = raw.OpenRead();
+            return Pcm16Converter.Convert(stream, format);
         }
-        finally { Array.Clear(raw); }
+        finally { raw.Clear(); }
     }
 
     public void Cancel()
@@ -109,7 +112,7 @@ public sealed class WasapiRecorder(Func<string?, IWaveIn>? captureFactory = null
                 ReachLimit();
                 return;
             }
-            _raw.Write(args.Buffer, 0, (int)Math.Min(args.BytesRecorded, remaining));
+            _raw.Write(args.Buffer.AsSpan(0, (int)Math.Min(args.BytesRecorded, remaining)));
             if (_raw.Length >= _maximumRawBytes) ReachLimit();
         }
     }
@@ -148,8 +151,7 @@ public sealed class WasapiRecorder(Func<string?, IWaveIn>? captureFactory = null
             capture.RecordingStopped -= OnRecordingStopped;
         }
         _capture = null;
-        if (_raw is not null) _raw.GetBuffer().AsSpan(0, checked((int)_raw.Length)).Clear();
-        _raw?.Dispose();
+        _raw?.Clear();
         _raw = null;
         _format = null;
         return capture;

@@ -148,7 +148,8 @@ internal sealed class GigaDictApplicationContext : ApplicationContext
                     {
                         var safe = () => !_exiting && _sessionAvailable && item.AutomaticInsertionAllowed &&
                             _focus.IsStillSafe(item.Id) && !_hook.IsAnyKeyHeld;
-                        var text = TextBoundary.Prepare(item.Result!, null, null, false, item.Settings.AutomaticSpaces);
+                        var context = item.Settings.AutomaticSpaces ? _focus.ReadCaretContext(item.Id) : null;
+                        var text = TextBoundary.Prepare(item.Result!, context, item.Settings.AutomaticSpaces);
                         if (item.Settings.InsertionMethod == InsertionMethod.UnicodeSendInput) UnicodeTextInserter.Insert(text, safe);
                         else await ClipboardTextInserter.InsertAsync(text, safe, _shutdown.Token);
                     });

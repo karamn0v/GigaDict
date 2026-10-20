@@ -14,6 +14,7 @@ public sealed class FocusGuard : IFocusGuard, IDisposable
     // unknown focus, which forbids insertion.
     private static readonly TimeSpan CaptureTimeout = TimeSpan.FromMilliseconds(500);
     private const uint AutomationTimeoutMilliseconds = 1000;
+    private const int TextPatternId = 10014; // UIA_TextPatternId
 
     private readonly FocusContinuityTracker _continuity = new();
     private readonly NativeMethods.WinEventProc _callback;
@@ -46,6 +47,16 @@ public sealed class FocusGuard : IFocusGuard, IDisposable
 
     public void Track(Guid taskId, FocusIdentity identity, FocusProtectionMode mode = FocusProtectionMode.Strict) => _continuity.Track(taskId, identity, mode);
     public bool IsStillSafe(Guid taskId) => _continuity.IsStillSafe(taskId, Capture());
+
+    // Characters around the caret of the focused element, only if that element
+    // still satisfies the task's focus binding. Identity and context come from one
+    // UIA call so they describe the same element. Null: no reliable context.
+    public CaretContext? ReadCaretContext(Guid taskId)
+    {
+        if (_events is null || _automationThread is null) return null;
+        if (!_automationThread.TryInvoke(ReadCaretCore, CaptureTimeout, out var read) || read.Identity is null) return null;
+        return _continuity.IsStillSafe(taskId, read.Identity) ? read.Context : null;
+    }
     public void Forget(Guid taskId) => _continuity.Forget(taskId);
     public void InvalidateAll() => _continuity.InvalidateAll();
 
@@ -86,15 +97,18 @@ public sealed class FocusGuard : IFocusGuard, IDisposable
         }
     }
 
-    private FocusIdentity? CaptureCore()
+    private FocusIdentity? CaptureCore() => CaptureCore(out _);
+
+    private FocusIdentity? CaptureCore(out IUIAutomationElement? element)
     {
+        element = null;
         if (_automation is null) return null;
         try
         {
             var window = NativeMethods.GetForegroundWindow();
             if (window == 0) return null;
             NativeMethods.GetWindowThreadProcessId(window, out var processId);
-            var element = _automation.GetFocusedElement();
+            element = _automation.GetFocusedElement();
             if (element is null) return null;
             var runtimeId = element.GetRuntimeId();
             if (runtimeId is null || runtimeId.Length == 0) return null;
@@ -106,6 +120,37 @@ public sealed class FocusGuard : IFocusGuard, IDisposable
         {
             return null;
         }
+    }
+
+    private (FocusIdentity? Identity, CaretContext? Context) ReadCaretCore()
+    {
+        var identity = CaptureCore(out var element);
+        if (identity is null || element is null || identity.IsPassword) return (identity, null);
+        try
+        {
+            if (element.GetCurrentPattern(TextPatternId) is not IUIAutomationTextPattern pattern) return (identity, null);
+            var selection = pattern.GetSelection();
+            if (selection is null || selection.Length != 1) return (identity, null);
+            var range = selection.GetElement(0);
+            // A selection is replaced by the text, so its outer neighbours matter.
+            return (identity, new CaretContext(ReadAdjacent(range, before: true), ReadAdjacent(range, before: false)));
+        }
+        catch (Exception exception) when (IsRecoverable(exception))
+        {
+            return (identity, null);
+        }
+    }
+
+    private static char? ReadAdjacent(IUIAutomationTextRange selection, bool before)
+    {
+        var range = selection.Clone();
+        var edge = before ? TextPatternRangeEndpoint.TextPatternRangeEndpoint_Start : TextPatternRangeEndpoint.TextPatternRangeEndpoint_End;
+        var opposite = before ? TextPatternRangeEndpoint.TextPatternRangeEndpoint_End : TextPatternRangeEndpoint.TextPatternRangeEndpoint_Start;
+        // Collapse to the selection edge, then extend one character outward.
+        range.MoveEndpointByRange(opposite, range, edge);
+        if (range.MoveEndpointByUnit(edge, TextUnit.TextUnit_Character, before ? -1 : 1) == 0) return null;
+        var text = range.GetText(-1);
+        return string.IsNullOrEmpty(text) ? null : before ? text[^1] : text[0];
     }
 
     private void OnFocusChanged(nint hook, uint eventType, nint window, int objectId, int childId, uint threadId, uint time)

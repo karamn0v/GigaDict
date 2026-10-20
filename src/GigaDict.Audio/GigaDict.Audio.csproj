@@ -5,6 +5,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="GigaDict.Tests" />
     <PackageReference Include="NAudio" Version="2.2.1" />
     <ProjectReference Include="../GigaDict.Core/GigaDict.Core.csproj" />
   </ItemGroup>
